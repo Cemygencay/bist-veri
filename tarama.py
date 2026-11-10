@@ -39,6 +39,14 @@ MAKRO = {
 
 # --------------------------------------------------------------------------- veri
 
+def tamamlanmis_gunler(df: pd.DataFrame) -> pd.DataFrame:
+    """Seans bitmeden (18:30 TSİ öncesi) çalışılırsa bugünün yarım mumunu çıkarır."""
+    simdi = datetime.now(TR)
+    if len(df) and df.index[-1].date() >= simdi.date() and simdi.hour * 60 + simdi.minute < 18 * 60 + 30:
+        return df.iloc[:-1]
+    return df
+
+
 def hisse_listesi() -> list[str]:
     satirlar = (KOK / "hisseler.txt").read_text(encoding="utf-8").splitlines()
     return [s.strip().upper() for s in satirlar if s.strip() and not s.startswith("#")]
@@ -65,6 +73,8 @@ def yahoo_cek(semboller: list[str]) -> dict[str, pd.DataFrame]:
             try:
                 df = ham[s] if isinstance(ham.columns, pd.MultiIndex) else ham
                 df = df.dropna(subset=["Close"])
+                if s.endswith(".IS"):
+                    df = tamamlanmis_gunler(df)
                 if len(df) >= 60:
                     sonuc[s] = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
             except KeyError:
@@ -101,7 +111,7 @@ def isyatirim_cek(kod: str) -> pd.DataFrame | None:
         "Close": pd.to_numeric(df["HGDG_KAPANIS"], errors="coerce"),
         "Volume": pd.to_numeric(df["HGDG_HACIM"], errors="coerce"),
     }).set_index(pd.to_datetime(df["HGDG_TARIH"], dayfirst=True, errors="coerce"))
-    df = df.dropna(subset=["Close"]).sort_index()
+    df = tamamlanmis_gunler(df.dropna(subset=["Close"]).sort_index())
     return df if len(df) >= 60 else None
 
 
