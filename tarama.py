@@ -311,6 +311,9 @@ def markdown_yaz(rapor: dict) -> str:
     satirlar = [f"# BIST teknik tarama — {rapor['olusturma']}", ""]
     satirlar.append(f"Analiz edilen: {rapor['ozet']['analiz_edilen']} / {rapor['ozet']['toplam']} hisse"
                     f" · Kaynak: {rapor['ozet']['kaynaklar']}")
+    satirlar.append(f"Referans işlem günü: {rapor['referans_gun']}")
+    if rapor["ozet"]["gecikmeli"]:
+        satirlar.append(f"Gecikmeli (referans günden eski veri): {', '.join(rapor['ozet']['gecikmeli'])}")
     if rapor["ozet"]["eksik"]:
         satirlar.append(f"Eksik: {', '.join(rapor['ozet']['eksik'])}")
     satirlar += ["", "## Makro", "", "| Gösterge | Kapanış | % | SMA200 üstü |", "| --- | --- | --- | --- |"]
@@ -345,21 +348,31 @@ def main() -> int:
     print(f"{len(kodlar)} hisse ve {len(MAKRO)} makro gösterge çekiliyor...")
     veri = yahoo_cek(semboller)
 
+    # Referans gün: BIST 100'ün son tamamlanmış günü. Hisse verisi bundan gerideyse yedek kaynağa bakılır.
+    endeks = veri.get("XU100.IS")
+    referans = endeks.index[-1].date() if endeks is not None and len(endeks) else None
+    print(f"Referans işlem günü (BIST 100): {referans}")
+
     kaynak: dict[str, str] = {}
     hisseler = []
     for kod in kodlar:
         df = veri.get(f"{kod}.IS")
         kaynak[kod] = "yahoo"
-        if df is None or len(df) < 210:
+        son = df.index[-1].date() if df is not None and len(df) else None
+        if df is None or len(df) < 210 or (referans and son < referans):
             yedek = isyatirim_cek(kod)
-            if yedek is not None and (df is None or len(yedek) > len(df)):
+            yedek_son = yedek.index[-1].date() if yedek is not None else None
+            if yedek is not None and len(yedek) >= 210 and (son is None or yedek_son > son or len(df) < 210):
                 df, kaynak[kod] = yedek, "isyatirim"
+            print(f"{kod}: yahoo={son} isyatirim={yedek_son} -> {kaynak[kod]}")
         if df is None:
             hisseler.append({"kod": kod, "durum": "veri_yok"})
             continue
         try:
             sonuc = hisse_analiz(kod, df)
             sonuc["kaynak"] = kaynak[kod]
+            if sonuc["durum"] == "ok":
+                sonuc["gecikmeli"] = bool(referans and df.index[-1].date() < referans)
             hisseler.append(sonuc)
         except Exception as e:  # noqa: BLE001
             print(f"Analiz hatası {kod}: {e}", file=sys.stderr)
@@ -369,7 +382,9 @@ def main() -> int:
     rapor = {
         "olusturma": datetime.now(TR).strftime("%Y-%m-%d %H:%M TSİ"),
         "veri_tarihi": max((h["tarih"] for h in tamam), default=None),
+        "referans_gun": str(referans) if referans else None,
         "ozet": {
+            "gecikmeli": [h["kod"] for h in tamam if h.get("gecikmeli")],
             "toplam": len(kodlar), "analiz_edilen": len(tamam),
             "eksik": [h["kod"] for h in hisseler if h["durum"] != "ok"],
             "kaynaklar": ", ".join(sorted({h["kaynak"] for h in tamam})) or "-",
